@@ -1,0 +1,11 @@
+# Exclude specific files
+Feature list.txt
+Collecting ads data/Misc.py
+Collecting ads data/real-estate-project-445516-83dc50b692bc.json
+Collecting ads data/scraped_links.txt
+
+# Exclude specific folders and their contents
+venv/
+.idea/
+Collecting advertiser data/Data/
+Collecting ads data/ads_data/
