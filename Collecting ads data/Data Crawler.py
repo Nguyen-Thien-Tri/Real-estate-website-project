@@ -8,6 +8,15 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from datetime import date, timedelta, datetime
+from selenium.common.exceptions import WebDriverException
+
+def get_page_with_retry(url, wait=30):
+    while True:
+        try:
+            driver.get(url)
+            return
+        except WebDriverException:
+            time.sleep(wait)
 
 
 def init_driver():
@@ -50,7 +59,7 @@ def find_start_page(base_url, end_date, start_page, max_pages):
     mid = (start_page + max_pages) // 2
     if mid == start_page:
         return start_page
-    driver.get(base_url.format(i=mid))
+    get_page_with_retry(base_url.format(i=mid))
     product_list = find_element_with_retry(By.ID, "product-lists-web")
     children = product_list.find_elements(By.CLASS_NAME, "js__card-full-web")
     for child in children:
@@ -69,7 +78,7 @@ def scrape_links(base_url, start_page, start_date, end_date, max_pages):
 
     for i in range(start_page - 2, max_pages + 1):
         url = base_url.format(i=i)
-        driver.get(url)
+        get_page_with_retry(url)
         product_list = find_element_with_retry(By.ID, "product-lists-web")
         children = product_list.find_elements(By.XPATH, "./*")
         for child in children:
@@ -111,7 +120,7 @@ def collect_ads_data(links):
     links = links[start_index:]
 
     for index, link in enumerate(links, start=start_index):
-        driver.get(link)
+        get_page_with_retry(link)
 
         # If the page is redirected to the homepage, skip the link
         if driver.current_url == "https://batdongsan.com.vn/":
@@ -382,7 +391,7 @@ def scrape_links_wrapper():
     all_scraped_links = []
 
     for base_url in base_urls:
-        driver.get(base_url.format(i=1))
+        get_page_with_retry(base_url.format(i=1))
         max_pages = get_max_page()
         start_page = find_start_page(base_url, end_date, 1, max_pages)
         links = scrape_links(base_url, start_page, start_date, end_date, max_pages)
@@ -412,6 +421,6 @@ driver = init_driver()
 # Main script
 if __name__ == "__main__":
     # clear_previous_data()
-    scrape_links_wrapper()
+    # scrape_links_wrapper()
     collect_ads_data_wrapper()
     push_data_to_bigquery()
