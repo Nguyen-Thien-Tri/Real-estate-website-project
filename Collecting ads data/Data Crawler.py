@@ -149,6 +149,17 @@ def collect_ads_data(links):
         except:
             continue
 
+        # Get product coordinates as soon as the element is loaded
+        map_element = driver.find_element(By.CLASS_NAME, "re__pr-map")
+        driver.execute_script("arguments[0].scrollIntoView();", map_element)
+        while True:
+            try:
+                map_element = map_element.find_element(By.CLASS_NAME, "lazyloaded")
+                ad_data['Tọa độ'] = map_element.get_attribute("data-src").split("=")[1].replace("&key", "")
+                break
+            except:
+                time.sleep(1)
+
         # Get the ads type, product type, product address
         element = find_element_with_retry(By.XPATH, "/html/body/div[8]/div[1]/div[2]/div[1]/div[2]")
         childs = element.find_elements(By.TAG_NAME, "a")
@@ -159,15 +170,11 @@ def collect_ads_data(links):
         ad_data['Khu vực'] = childs[3].text
 
         # Get product features
-        features_element = find_element_with_retry(By.CLASS_NAME, "re__pr-specs-content")
+        features_element = find_element_with_retry(By.CLASS_NAME, "re__pr-specs-content-item")
         feature_titles = driver.find_elements(By.CLASS_NAME, "re__pr-specs-content-item-title")
         feature_values = driver.find_elements(By.CLASS_NAME, "re__pr-specs-content-item-value")
         for title, value in zip(feature_titles, feature_values):
             ad_data[title.text] = value.text
-
-        # Get product coordinates
-        map_element = find_element_with_retry(By.CLASS_NAME, "place-name")
-        ad_data['Tọa độ'] = map_element.get_attribute("data-coordinates")
 
         # Get associated project links and names
         try:
@@ -467,7 +474,7 @@ driver = init_driver()
 
 # Main script
 if __name__ == "__main__":
-    clear_previous_data()
-    scrape_links_wrapper()
+    # clear_previous_data()
+    # scrape_links_wrapper()
     collect_ads_data_wrapper()
     push_data_to_bigquery()
