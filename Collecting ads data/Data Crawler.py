@@ -27,6 +27,8 @@ def init_driver():
     profile_name = "Profile 2"
     options.add_argument(f"--user-data-dir={user_data_dir}")  # Load user data directory
     options.add_argument(f"--profile-directory={profile_name}")
+    options.add_argument('--blink-settings=imagesEnabled=false')
+    options.page_load_strategy = "none"
     driver = webdriver.Chrome(options=options)
 
     # Minimize the webdriver
@@ -149,16 +151,9 @@ def collect_ads_data(links):
         except:
             continue
 
-        # Get product coordinates as soon as the element is loaded
+        # Move to the map frame
         map_element = driver.find_element(By.CLASS_NAME, "re__pr-map")
         driver.execute_script("arguments[0].scrollIntoView();", map_element)
-        while True:
-            try:
-                map_element = map_element.find_element(By.CLASS_NAME, "lazyloaded")
-                ad_data['Tọa độ'] = map_element.get_attribute("data-src").split("=")[1].replace("&key", "")
-                break
-            except:
-                time.sleep(1)
 
         # Get the ads type, product type, product address
         element = find_element_with_retry(By.XPATH, "/html/body/div[8]/div[1]/div[2]/div[1]/div[2]")
@@ -187,6 +182,15 @@ def collect_ads_data(links):
         except:
             ad_data['Link dự án'] = None
             ad_data['Tên dự án'] = None
+
+        # Get the map coordinates
+        while True:
+            try:
+                map_element = map_element.find_element(By.CLASS_NAME, "lazyloaded")
+                ad_data['Tọa độ'] = map_element.get_attribute("data-src").split("=")[1].replace("&key", "")
+                break
+            except:
+                time.sleep(1)
 
         ads_data.append(ad_data)
 
@@ -436,8 +440,8 @@ def get_existed_ads_ids(project_id="real-estate-project-445516", dataset_id="rea
 def scrape_links_wrapper():
     base_urls = ["https://batdongsan.com.vn/nha-dat-ban/p{i}?sortValue=1",
                  "https://batdongsan.com.vn/nha-dat-cho-thue/p{i}?sortValue=1"]
-    # start_date = determine_start_date()
-    start_date = date.today() - timedelta(days=1)
+    start_date = determine_start_date()
+    # start_date = date.today() - timedelta(days=1)
     end_date = date.today() - timedelta(days=1)
     existed_ads_ids = get_existed_ads_ids()
     all_scraped_links = []
