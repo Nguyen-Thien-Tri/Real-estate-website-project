@@ -28,8 +28,8 @@ def init_driver():
     options = Options()
     options.add_argument('--blink-settings=imagesEnabled=false')
     options.page_load_strategy = "none"
-    options.add_extension("cfhdojbkjhnklbpkdaibdccddilifddb.crx")
-    options.add_extension("cmdgdghfledlbkbciggfjblphiafkcgg.crx")
+    options.add_extension("AdBlock_1.crx")
+    options.add_extension("AdBlock_2.crx")
     driver = webdriver.Chrome(options=options)
     driver.minimize_window()
     return driver
@@ -113,6 +113,7 @@ def collect_ads_data(links, num_worker=4):
     def worker(driver, url_queue):
         ads_data = []
         driver_name = driver[1]
+
         # Check the last index from files in the driver data directory
         if os.path.exists(f"ads_data/{driver_name}_data"):
             files = os.listdir(f"ads_data/{driver_name}_data")
@@ -121,8 +122,9 @@ def collect_ads_data(links, num_worker=4):
             last_index = 0
             os.makedirs(f"ads_data/{driver_name}_data")
 
+        # Scrape data from each URL
         while not url_queue.empty():
-            url = url_queue.get()  # Get a URL from the queue
+            url = url_queue.get()
             try:
                 get_page_with_retry(driver[0], url[0])
                 ngay_gia_han = url[1]
@@ -146,7 +148,7 @@ def collect_ads_data(links, num_worker=4):
                     continue
 
                 # Move to the map frame
-                map_element = driver[0].find_element(By.CLASS_NAME, "re__pr-map")
+                map_element = find_element_with_retry(driver[0], By.CLASS_NAME, "re__pr-map")
                 driver[0].execute_script("arguments[0].scrollIntoView();", map_element)
 
                 # Get the ads type, product type, product address
@@ -211,7 +213,7 @@ def collect_ads_data(links, num_worker=4):
         if os.path.exists(f"ads_data/driver{i}_data"):
             files = os.listdir(f"ads_data/driver{i}_data")
             if files:
-                last_batch_index = int(files[-1].split("_")[-1].split(".")[0])
+                last_batch_index = int(files[-1].split("_")[-1].replace("batch", "").split(".")[0])
                 last_batch_index_list.append(last_batch_index)
 
     # Start from the next batch
