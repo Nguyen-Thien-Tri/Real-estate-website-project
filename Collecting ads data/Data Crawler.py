@@ -27,11 +27,11 @@ def get_page_with_retry(driver, url, wait=30):
 def init_driver():
     options = Options()
     options.add_argument('--blink-settings=imagesEnabled=false')
+    options.add_argument("--disable-features=UseEcoQoSForBackgroundProcess")
     options.page_load_strategy = "none"
     options.add_extension("AdBlock_1.crx")
     options.add_extension("AdBlock_2.crx")
     driver = webdriver.Chrome(options=options)
-    driver.minimize_window()
     return driver
 
 
@@ -96,7 +96,8 @@ def scrape_links(driver, base_url, start_page, start_date, end_date, max_pages, 
             ads_id = link.split("-")[-1].replace("pr", "")
 
             # Check if the ads_id is in existed_ads_ids
-            if existed_ads_ids:
+            flag = False if existed_ads_ids is None else True
+            if flag:
                 if ads_id not in existed_ads_ids:
                     all_links.append((link, ngay_gia_han))
             else:
@@ -197,8 +198,8 @@ def collect_ads_data(links, num_worker=4):
                     last_index += 1
                     ads_data = []
 
-            except Exception as e:
-                raise Exception(f"Error scraping {url}: {e}")
+            except:
+                continue
             finally:
                 url_queue.task_done()  # Mark the task as done
 
@@ -212,6 +213,8 @@ def collect_ads_data(links, num_worker=4):
     for i in range(num_worker):
         if os.path.exists(f"ads_data/driver{i}_data"):
             files = os.listdir(f"ads_data/driver{i}_data")
+            # Sort the files by batch index
+            files = sorted(files, key=lambda x: int(x.split("_")[-1].replace("batch", "").split(".")[0]))
             if files:
                 last_batch_index = int(files[-1].split("_")[-1].replace("batch", "").split(".")[0])
                 last_batch_index_list.append(last_batch_index)
@@ -326,6 +329,11 @@ def data_processing(df1):
     # Process "Mã tin"
     df["Mã tin"] = df["Mã tin"].astype(str)
 
+    # Process "Tọa độ"
+    df["Tọa độ x"] = df["Tọa độ"].apply(lambda x: x.split(",")[0] if x != ',' else None)
+    df["Tọa độ y"] = df["Tọa độ"].apply(lambda x: x.split(",")[1] if x != ',' else None)
+    df.drop(columns=["Tọa độ"], inplace=True)
+
     # Change column names
     column_mapping = {"Loại quảng cáo": "Loai_quang_cao", "Loại BĐS": "Loai_BDS", "Tỉnh, thành phố": "Tinh_thanh_pho",
         "Quận": "Quan", "Khu vực": "Khu_vuc", "Diện tích": "Dien_tich", "Mức giá": "Muc_gia", "Hướng nhà": "Huong_nha",
@@ -333,7 +341,7 @@ def data_processing(df1):
         "Tên dự án": "Ten_du_an", "Ngày đăng": "Ngay_dang", "Ngày hết hạn": "Ngay_het_han", "Loại tin": "Loai_tin",
         "Mã tin": "Ma_tin", "Hướng ban công": "Huong_ban_cong", "Số toilet": "So_toilet", "Đường vào": "Duong_vao",
         "Số tầng": "So_tang", "Mặt tiền": "Mat_tien", "Số phòng tắm, vệ sinh": "So_phong_tam_ve_sinh",
-        "Tọa độ": "Toa_do", "Ngày gia hạn": "Ngay_gia_han"}
+        "Tọa độ x": "Toa_do_x", "Tọa độ y": "Toa_do_y", "Ngày gia hạn": "Ngay_gia_han"}
     df.rename(columns=column_mapping, inplace=True)
 
     # Convert all object columns to str columns
@@ -343,7 +351,7 @@ def data_processing(df1):
 
     # Drop nan values
     df.dropna(subset=["Ma_tin", "Loai_tin", "Ngay_dang", "Ngay_het_han", "Loai_quang_cao", "Loai_BDS", "Tinh_thanh_pho",
-                      "Quan", "Dien_tich", "Mưc_gia"], inplace=True)
+                      "Quan", "Dien_tich", "Mưc_gia", "Khu_vuc"], inplace=True)
 
     print(df.info())
 
@@ -351,17 +359,14 @@ def data_processing(df1):
 
 
 def push_data_to_bigquery(data_dir="ads_data/", project_id="real-estate-project-445516", dataset_id="real_estate_data",
-                          table_id="ads_data"):
-    # Get the list of files in the data directory
-    files = os.listdir(data_dir)
-
-    # Initialize a DataFrame to store the data from all files
+                          table_id="ads_data", num_worker=4):
+    # Concatenate all data from different workers
     df = pd.DataFrame()
-
-    # Read the data from each file and append it to the DataFrame
-    for file in files:
-        data = pd.read_excel(f"{data_dir}/{file}")
-        df = pd.concat([df, data], ignore_index=True)
+    for i in range(num_worker):
+        files = os.listdir(f"{data_dir}driver{i}_data")
+        for file in files:
+            df_temp = pd.read_excel(f"{data_dir}driver{i}_data/{file}")
+            df = pd.concat([df, df_temp], ignore_index=True)
 
     # Process the data
     df = data_processing(df)
@@ -462,8 +467,8 @@ def scrape_links_wrapper():
 
     driver = init_driver()
 
-    start_date = determine_start_date()
-    # start_date = date.today() - timedelta(days=1)
+    # start_date = determine_start_date()
+    start_date = date.today() - timedelta(days=1)
     end_date = date.today() - timedelta(days=1)
     existed_ads_ids = get_existed_ads_ids()
     all_scraped_links = []
@@ -487,13 +492,13 @@ def scrape_links_wrapper():
     driver.quit()
 
 
-def collect_ads_data_wrapper():
+def collect_ads_data_wrapper(num_worker=4):
     all_scraped_links = []
     with open("scraped_links.csv", mode='r') as file:
         reader = csv.reader(file)
         for row in reader:
             all_scraped_links.append((row[0], datetime.strptime(row[1], "%Y-%m-%d").date()))
-    collect_ads_data(all_scraped_links)
+    collect_ads_data(all_scraped_links, num_worker=num_worker)
 
 
 # Set the environment variable for authentication
@@ -501,7 +506,7 @@ os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "real-estate-project-445516-83dc5
 
 # Main script
 if __name__ == "__main__":
-    # clear_previous_data()
-    # scrape_links_wrapper()
+    clear_previous_data()
+    scrape_links_wrapper()
     collect_ads_data_wrapper()
     push_data_to_bigquery()
