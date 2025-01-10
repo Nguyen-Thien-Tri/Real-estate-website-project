@@ -12,7 +12,8 @@ from google.cloud import bigquery
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.keys import Keys
 
 def get_page_with_retry(driver, url, wait=30):
     while True:
@@ -28,12 +29,19 @@ def init_driver():
     options = Options()
     options.add_argument('--blink-settings=imagesEnabled=false')
     options.add_argument("--disable-features=UseEcoQoSForBackgroundProcess")
+    options.add_argument("--disable-cache")
+    options.add_argument("--incognito")
+    options.add_argument("--disable-popup-blocking")
+    options.add_argument("--disable-local-storage")
+    options.add_argument("--disable-session-storage")
+    options.add_argument("--disable-web-storage")
+    options.add_argument("--disable-cookies")
+
     options.page_load_strategy = "none"
     options.add_extension("AdBlock_1.crx")
     options.add_extension("AdBlock_2.crx")
     driver = webdriver.Chrome(options=options)
     return driver
-
 
 # Function to find an element with retries
 def find_element_with_retry(driver, by, value, retries=10, wait=0.5):
@@ -43,35 +51,6 @@ def find_element_with_retry(driver, by, value, retries=10, wait=0.5):
         except:
             time.sleep(wait)
     raise Exception(f"Element not found: {value}")
-
-
-# Function to find the max page from pagination
-def get_max_page(driver):
-    try:
-        pagination_group = find_element_with_retry(driver, By.CLASS_NAME, "re__pagination-group")
-        near_last_child = pagination_group.find_elements(By.XPATH, "./*")[-2]
-        # remove the period in the number
-        return int(near_last_child.text.replace(".", ""))
-    except Exception:
-        return 1
-
-
-# Function to find the starting page
-def find_start_page(driver, base_url, end_date, start_page, max_pages):
-    mid = (start_page + max_pages) // 2
-    if mid == start_page:
-        return start_page
-    get_page_with_retry(driver, base_url.format(i=mid))
-    product_list = find_element_with_retry(driver, By.ID, "product-lists-web")
-    children = product_list.find_elements(By.CLASS_NAME, "js__card-full-web")
-    for child in children:
-        element = child.find_element(By.CSS_SELECTOR, "span.re__card-published-info-published-at")
-        ngay_dang = element.get_attribute("aria-label")
-        ngay_dang_date = datetime.strptime(ngay_dang, "%d/%m/%Y").date()
-        if ngay_dang_date <= end_date:
-            return find_start_page(driver, base_url, end_date, start_page, mid)
-        elif ngay_dang_date > end_date:
-            return find_start_page(driver, base_url, end_date, mid, max_pages)
 
 
 # Function to scrape links
@@ -114,6 +93,7 @@ def collect_ads_data(links, num_worker=4):
     def worker(driver, url_queue):
         ads_data = []
         driver_name = driver[1]
+        url_count = 0
 
         # Check the last index from files in the driver data directory
         if os.path.exists(f"ads_data/{driver_name}_data"):
@@ -153,7 +133,7 @@ def collect_ads_data(links, num_worker=4):
                 driver[0].execute_script("arguments[0].scrollIntoView();", map_element)
 
                 # Get the ads type, product type, product address
-                element = find_element_with_retry(driver[0], By.XPATH, "/html/body/div[8]/div[1]/div[2]/div[1]/div[2]")
+                element = find_element_with_retry(driver[0], By.XPATH, "/html/body/div[7]/div[1]/div[2]/div[1]/div[2]")
                 childs = element.find_elements(By.TAG_NAME, "a")
                 ad_data['Loại quảng cáo'] = childs[0].text
                 ad_data['Loại BĐS'] = childs[0].get_attribute("title")
@@ -181,12 +161,14 @@ def collect_ads_data(links, num_worker=4):
                     ad_data['Tên dự án'] = None
 
                 # Get the map coordinates
-                while True:
+                i = 0
+                while i<10:
                     try:
                         map_element = map_element.find_element(By.CLASS_NAME, "lazyloaded")
                         ad_data['Tọa độ'] = map_element.get_attribute("data-src").split("=")[1].replace("&key", "")
                         break
                     except:
+                        i += 1
                         time.sleep(0.5)
 
                 ads_data.append(ad_data)
@@ -198,8 +180,27 @@ def collect_ads_data(links, num_worker=4):
                     last_index += 1
                     ads_data = []
 
-            except:
-                continue
+                url_count += 1
+
+                # Optimize the performance
+                if url_count >= 10:
+                    driver[0].execute_script("window.open('');")
+                    old_tab = driver[0].current_window_handle
+                    for tab in driver[0].window_handles:
+                        if tab != old_tab:
+                            new_tab = tab
+                            driver[0].close()
+                    driver[0].switch_to.window(new_tab)
+                    url_count = 0
+
+                    # Delete temp folders C:\Users\nttzz\AppData\Local\Temp
+                    temp_dir = os.path.join(os.environ["LOCALAPPDATA"], "Temp")
+                    for folder in os.listdir(temp_dir):
+                        if folder.startswith("chrome_BITS") or folder.startswith("scoped_dir"):
+                            shutil.rmtree(os.path.join(temp_dir, folder), ignore_errors=True)
+
+            except Exception as e:
+                raise e
             finally:
                 url_queue.task_done()  # Mark the task as done
 
@@ -207,23 +208,6 @@ def collect_ads_data(links, num_worker=4):
         if ads_data:
             df = pd.DataFrame(ads_data)
             df.to_excel(f"ads_data/{driver_name}_data/ads_data_batch{(last_index + 1)}.xlsx", index=False)
-
-    # Check the driver data directories for existing batch files
-    last_batch_index_list = []
-    for i in range(num_worker):
-        if os.path.exists(f"ads_data/driver{i}_data"):
-            files = os.listdir(f"ads_data/driver{i}_data")
-            # Sort the files by batch index
-            files = sorted(files, key=lambda x: int(x.split("_")[-1].replace("batch", "").split(".")[0]))
-            if files:
-                last_batch_index = int(files[-1].split("_")[-1].replace("batch", "").split(".")[0])
-                last_batch_index_list.append(last_batch_index)
-
-    # Start from the next batch
-    start_index = 0
-    if last_batch_index_list:
-        start_index = sum(last_batch_index_list) * 100
-    links = links[start_index:]
 
     # Initialize the queue and add all URLs
     queue = Queue()
@@ -462,6 +446,32 @@ def get_existed_ads_ids(project_id="real-estate-project-445516", dataset_id="rea
 
 
 def scrape_links_wrapper():
+    # Function to find the starting page
+    def find_start_page(driver, base_url, end_date, start_page, max_pages):
+        mid = (start_page + max_pages) // 2
+        if mid == start_page:
+            return start_page
+        get_page_with_retry(driver, base_url.format(i=mid))
+        product_list = find_element_with_retry(driver, By.ID, "product-lists-web")
+        children = product_list.find_elements(By.CLASS_NAME, "js__card-full-web")
+        for child in children:
+            element = child.find_element(By.CSS_SELECTOR, "span.re__card-published-info-published-at")
+            ngay_dang = element.get_attribute("aria-label")
+            ngay_dang_date = datetime.strptime(ngay_dang, "%d/%m/%Y").date()
+            if ngay_dang_date <= end_date:
+                return find_start_page(driver, base_url, end_date, start_page, mid)
+            elif ngay_dang_date > end_date:
+                return find_start_page(driver, base_url, end_date, mid, max_pages)
+
+    def get_max_page(driver):
+        try:
+            pagination_group = find_element_with_retry(driver, By.CLASS_NAME, "re__pagination-group")
+            near_last_child = pagination_group.find_elements(By.XPATH, "./*")[-2]
+            # remove the period in the number
+            return int(near_last_child.text.replace(".", ""))
+        except Exception:
+            return 1
+
     base_urls = ["https://batdongsan.com.vn/nha-dat-ban/p{i}?sortValue=1",
                  "https://batdongsan.com.vn/nha-dat-cho-thue/p{i}?sortValue=1"]
 
@@ -506,7 +516,7 @@ os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "real-estate-project-445516-83dc5
 
 # Main script
 if __name__ == "__main__":
-    clear_previous_data()
-    scrape_links_wrapper()
+    # clear_previous_data()
+    # scrape_links_wrapper()
     collect_ads_data_wrapper()
     push_data_to_bigquery()
