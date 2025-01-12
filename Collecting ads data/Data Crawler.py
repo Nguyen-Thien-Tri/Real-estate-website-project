@@ -2,6 +2,7 @@ import csv
 import os
 import shutil
 import time
+import tempfile
 from datetime import date, timedelta, datetime
 from queue import Queue
 from threading import Thread
@@ -12,8 +13,7 @@ from google.cloud import bigquery
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.common.keys import Keys
+
 
 def get_page_with_retry(driver, url, wait=30):
     while True:
@@ -36,12 +36,14 @@ def init_driver():
     options.add_argument("--disable-session-storage")
     options.add_argument("--disable-web-storage")
     options.add_argument("--disable-cookies")
+    options.add_argument("--disk-cache-size=0")
+    options.add_argument("--disable-application-cache")
 
     options.page_load_strategy = "none"
-    options.add_extension("AdBlock_1.crx")
     options.add_extension("AdBlock_2.crx")
     driver = webdriver.Chrome(options=options)
     return driver
+
 
 # Function to find an element with retries
 def find_element_with_retry(driver, by, value, retries=10, wait=0.5):
@@ -162,7 +164,7 @@ def collect_ads_data(links, num_worker=4):
 
                 # Get the map coordinates
                 i = 0
-                while i<10:
+                while i < 10:
                     try:
                         map_element = map_element.find_element(By.CLASS_NAME, "lazyloaded")
                         ad_data['Tọa độ'] = map_element.get_attribute("data-src").split("=")[1].replace("&key", "")
@@ -183,7 +185,7 @@ def collect_ads_data(links, num_worker=4):
                 url_count += 1
 
                 # Optimize the performance
-                if url_count >= 10:
+                if url_count >= 5:
                     driver[0].execute_script("window.open('');")
                     old_tab = driver[0].current_window_handle
                     for tab in driver[0].window_handles:
@@ -193,11 +195,10 @@ def collect_ads_data(links, num_worker=4):
                     driver[0].switch_to.window(new_tab)
                     url_count = 0
 
-                    # Delete temp folders C:\Users\nttzz\AppData\Local\Temp
-                    temp_dir = os.path.join(os.environ["LOCALAPPDATA"], "Temp")
+                    # Delete temp folders
                     for folder in os.listdir(temp_dir):
-                        if folder.startswith("chrome_BITS") or folder.startswith("scoped_dir"):
-                            shutil.rmtree(os.path.join(temp_dir, folder), ignore_errors=True)
+                        if "Chrom" in folder:
+                            os.system(f"rm -rf {folder}")
 
             except Exception as e:
                 raise e
@@ -208,6 +209,8 @@ def collect_ads_data(links, num_worker=4):
         if ads_data:
             df = pd.DataFrame(ads_data)
             df.to_excel(f"ads_data/{driver_name}_data/ads_data_batch{(last_index + 1)}.xlsx", index=False)
+
+    temp_dir = tempfile.gettempdir()
 
     # Initialize the queue and add all URLs
     queue = Queue()
@@ -320,12 +323,16 @@ def data_processing(df1):
 
     # Change column names
     column_mapping = {"Loại quảng cáo": "Loai_quang_cao", "Loại BĐS": "Loai_BDS", "Tỉnh, thành phố": "Tinh_thanh_pho",
-        "Quận": "Quan", "Khu vực": "Khu_vuc", "Diện tích": "Dien_tich", "Mức giá": "Muc_gia", "Hướng nhà": "Huong_nha",
-        "Số phòng ngủ": "So_phong_ngu", "Pháp lý": "Phap_ly", "Nội thất": "Noi_that", "Link dự án": "Link_du_an",
-        "Tên dự án": "Ten_du_an", "Ngày đăng": "Ngay_dang", "Ngày hết hạn": "Ngay_het_han", "Loại tin": "Loai_tin",
-        "Mã tin": "Ma_tin", "Hướng ban công": "Huong_ban_cong", "Số toilet": "So_toilet", "Đường vào": "Duong_vao",
-        "Số tầng": "So_tang", "Mặt tiền": "Mat_tien", "Số phòng tắm, vệ sinh": "So_phong_tam_ve_sinh",
-        "Tọa độ x": "Toa_do_x", "Tọa độ y": "Toa_do_y", "Ngày gia hạn": "Ngay_gia_han"}
+                      "Quận": "Quan", "Khu vực": "Khu_vuc", "Diện tích": "Dien_tich", "Mức giá": "Muc_gia",
+                      "Hướng nhà": "Huong_nha",
+                      "Số phòng ngủ": "So_phong_ngu", "Pháp lý": "Phap_ly", "Nội thất": "Noi_that",
+                      "Link dự án": "Link_du_an",
+                      "Tên dự án": "Ten_du_an", "Ngày đăng": "Ngay_dang", "Ngày hết hạn": "Ngay_het_han",
+                      "Loại tin": "Loai_tin",
+                      "Mã tin": "Ma_tin", "Hướng ban công": "Huong_ban_cong", "Số toilet": "So_toilet",
+                      "Đường vào": "Duong_vao",
+                      "Số tầng": "So_tang", "Mặt tiền": "Mat_tien", "Số phòng tắm, vệ sinh": "So_phong_tam_ve_sinh",
+                      "Tọa độ x": "Toa_do_x", "Tọa độ y": "Toa_do_y", "Ngày gia hạn": "Ngay_gia_han"}
     df.rename(columns=column_mapping, inplace=True)
 
     # Convert all object columns to str columns
