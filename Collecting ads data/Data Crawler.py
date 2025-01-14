@@ -96,14 +96,15 @@ def collect_ads_data(links, num_worker=4):
         ads_data = []
         driver_name = driver[1]
         url_count = 0
+        page_count = 0
 
         # Check the last index from files in the driver data directory
-        if os.path.exists(f"ads_data/{driver_name}_data"):
-            files = os.listdir(f"ads_data/{driver_name}_data")
+        if os.path.exists(f"home/tri/Documents/Real estate website project/ads_data/{driver_name}_data"):
+            files = os.listdir(f"home/tri/Documents/Real estate website project/ads_data/{driver_name}_data")
             last_index = len(files)
         else:
             last_index = 0
-            os.makedirs(f"ads_data/{driver_name}_data")
+            os.makedirs(f"home/tri/Documents/Real estate website project/ads_data/{driver_name}_data")
 
         # Scrape data from each URL
         while not url_queue.empty():
@@ -178,13 +179,14 @@ def collect_ads_data(links, num_worker=4):
                 # Save data for each 100 rows
                 if len(ads_data) % 100 == 0:
                     df = pd.DataFrame(ads_data)
-                    df.to_excel(f"ads_data/{driver_name}_data/ads_data_batch{(last_index + 1)}.xlsx", index=False)
+                    df.to_excel(
+                        f"home/tri/Documents/Real estate website project/ads_data/{driver_name}_data/ads_data_batch{(last_index + 1)}.xlsx",
+                        index=False)
                     last_index += 1
                     ads_data = []
 
-                url_count += 1
-
                 # Optimize the performance
+                url_count += 1
                 if url_count >= 5:
                     driver[0].execute_script("window.open('');")
                     old_tab = driver[0].current_window_handle
@@ -196,21 +198,49 @@ def collect_ads_data(links, num_worker=4):
                     url_count = 0
 
                     # Delete temp folders
-                    for folder in os.listdir(temp_dir):
-                        if "Chrom" in folder:
-                            os.system(f"rm -rf {folder}")
+                    if driver_name == "driver0":
+                        for folder in os.listdir(temp_dir):
+                            if "Chrom" in folder:
+                                os.system(f"rm -rf tmp/{folder}")
+
+                # Reset the web driver
+                page_count += 1
+                if page_count >= 100:
+                    driver[0].quit()
+                    driver = (init_driver(), driver_name)
+                    driver[0].execute_cdp_cmd("Network.setCacheDisabled", {"cacheDisabled": True})
+                    page_count = 0
 
             except Exception as e:
-                raise e
+                continue
             finally:
                 url_queue.task_done()  # Mark the task as done
 
         # Save remaining data
         if ads_data:
             df = pd.DataFrame(ads_data)
-            df.to_excel(f"ads_data/{driver_name}_data/ads_data_batch{(last_index + 1)}.xlsx", index=False)
+            df.to_excel(
+                f"home/tri/Documents/Real estate website project/ads_data/{driver_name}_data/ads_data_batch{(last_index + 1)}.xlsx",
+                index=False)
 
     temp_dir = tempfile.gettempdir()
+
+    # Check the driver data directories for existing batch files
+    last_batch_index_list = []
+    for i in range(num_worker):
+        if os.path.exists(f"home/tri/Documents/Real estate website project/ads_data/driver{i}_data"):
+            files = os.listdir(f"home/tri/Documents/Real estate website project/ads_data/driver{i}_data")
+            # Sort the files by batch index
+            files = sorted(files, key=lambda x: int(x.split("_")[-1].replace("batch", "").split(".")[0]))
+            if files:
+                last_batch_index = int(files[-1].split("_")[-1].replace("batch", "").split(".")[0])
+                last_batch_index_list.append(last_batch_index)
+
+    # Start from the next batch
+    start_index = 0
+    if last_batch_index_list:
+        start_index = sum(last_batch_index_list) * 100
+    links = links[start_index:]
 
     # Initialize the queue and add all URLs
     queue = Queue()
@@ -219,6 +249,9 @@ def collect_ads_data(links, num_worker=4):
 
     # Start threads for WebDrivers
     web_drivers = [(init_driver(), f"driver{i}") for i in range(num_worker)]
+    for web_driver in web_drivers:
+        web_driver[0].execute_cdp_cmd("Network.setCacheDisabled", {"cacheDisabled": True})
+
     threads = []
     for web_driver in web_drivers:
         thread = Thread(target=worker, args=(web_driver, queue))
@@ -422,11 +455,11 @@ def determine_start_date():
 def clear_previous_data(num_worker=4):
     # Delete data in all webdriver directories
     for i in range(num_worker):
-        shutil.rmtree(f"ads_data/driver{i}_data", ignore_errors=True)
+        shutil.rmtree(f"home/tri/Documents/Real estate website project/ads_data/driver{i}_data", ignore_errors=True)
 
-    # Creat webdriver directories
+    # Create webdriver data directories
     for i in range(num_worker):
-        os.makedirs(f"ads_data/driver{i}_data")
+        os.makedirs(f"home/tri/Documents/Real estate website project/ads_data/driver{i}_data")
 
 
 def get_existed_ads_ids(project_id="real-estate-project-445516", dataset_id="real_estate_data", table_id="ads_data"):
@@ -523,7 +556,7 @@ os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "real-estate-project-445516-83dc5
 
 # Main script
 if __name__ == "__main__":
-    # clear_previous_data()
-    # scrape_links_wrapper()
+    clear_previous_data()
+    scrape_links_wrapper()
     collect_ads_data_wrapper()
     push_data_to_bigquery()
