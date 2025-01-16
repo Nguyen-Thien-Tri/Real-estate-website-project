@@ -136,7 +136,7 @@ def collect_ads_data(links, num_worker=4):
                 driver[0].execute_script("arguments[0].scrollIntoView();", map_element)
 
                 # Get the ads type, product type, product address
-                element = find_element_with_retry(driver[0], By.XPATH, "/html/body/div[7]/div[1]/div[2]/div[1]/div[2]")
+                element = find_element_with_retry(driver[0], By.CLASS_NAME, "js__ob-breadcrumb")
                 childs = element.find_elements(By.TAG_NAME, "a")
                 ad_data['Loại quảng cáo'] = childs[0].text
                 ad_data['Loại BĐS'] = childs[0].get_attribute("title")
@@ -212,6 +212,7 @@ def collect_ads_data(links, num_worker=4):
                     page_count = 0
 
             except Exception as e:
+                print(e)
                 continue
             finally:
                 url_queue.task_done()  # Mark the task as done
@@ -290,11 +291,6 @@ def data_processing(df1):
         "Int64") if "Số phòng tắm, vệ sinh" in df.columns else None
     df["Số toilet"] = df["Số toilet"].str.replace(" phòng", "").astype("Int64") if "Số toilet" in df.columns else None
 
-    # Move key columns to head columns
-    columns_to_move = ["Mã tin", "Loại tin", "Ngày đăng", "Ngày gia hạn", "Ngày hết hạn", "Tọa độ"]
-    remaining_columns = [col for col in df.columns if col not in columns_to_move]
-    df = df[columns_to_move + remaining_columns]
-
     # Change "Ngày đăng", "Ngày gia hạn" and "Ngày hết hạn" (d/m/y) into date
     df["Ngày đăng"] = pd.to_datetime(df["Ngày đăng"], format="%d/%m/%Y")
     df["Ngày gia hạn"] = pd.to_datetime(df["Ngày gia hạn"], format="%d/%m/%Y")
@@ -350,9 +346,14 @@ def data_processing(df1):
     df["Mã tin"] = df["Mã tin"].astype(str)
 
     # Process "Tọa độ"
-    df["Tọa độ x"] = df["Tọa độ"].apply(lambda x: x.split(",")[0] if x != ',' else None)
-    df["Tọa độ y"] = df["Tọa độ"].apply(lambda x: x.split(",")[1] if x != ',' else None)
+    df["Tọa độ x"] = df["Tọa độ"].apply(lambda x: float(x.split(",")[0]) if isinstance(x, str) and x != ',' else None)
+    df["Tọa độ y"] = df["Tọa độ"].apply(lambda x: float(x.split(",")[1]) if isinstance(x, str) and x != ',' else None)
     df.drop(columns=["Tọa độ"], inplace=True)
+
+    # Move key columns to head columns
+    columns_to_move = ["Mã tin", "Loại tin", "Ngày đăng", "Ngày gia hạn", "Ngày hết hạn"]
+    remaining_columns = [col for col in df.columns if col not in columns_to_move]
+    df = df[columns_to_move + remaining_columns]
 
     # Change column names
     column_mapping = {"Loại quảng cáo": "Loai_quang_cao", "Loại BĐS": "Loai_BDS", "Tỉnh, thành phố": "Tinh_thanh_pho",
@@ -365,7 +366,10 @@ def data_processing(df1):
                       "Mã tin": "Ma_tin", "Hướng ban công": "Huong_ban_cong", "Số toilet": "So_toilet",
                       "Đường vào": "Duong_vao",
                       "Số tầng": "So_tang", "Mặt tiền": "Mat_tien", "Số phòng tắm, vệ sinh": "So_phong_tam_ve_sinh",
-                      "Tọa độ x": "Toa_do_x", "Tọa độ y": "Toa_do_y", "Ngày gia hạn": "Ngay_gia_han"}
+                      "Tọa độ x": "Toa_do_x", "Tọa độ y": "Toa_do_y", "Ngày gia hạn": "Ngay_gia_han",
+                      "Tiện ích": "Tien_ich", "Thời gian dự kiến vào ở": "Thoi_gian_du_kien_vao_o",
+                      "Mức giá điện": "Muc_gia_dien", "Mức giá internet": "Muc_gia_internet",
+                      "Mức giá nước": "Muc_gia_nuoc"}
     df.rename(columns=column_mapping, inplace=True)
 
     # Convert all object columns to str columns
@@ -375,14 +379,15 @@ def data_processing(df1):
 
     # Drop nan values
     df.dropna(subset=["Ma_tin", "Loai_tin", "Ngay_dang", "Ngay_het_han", "Loai_quang_cao", "Loai_BDS", "Tinh_thanh_pho",
-                      "Quan", "Dien_tich", "Mưc_gia", "Khu_vuc"], inplace=True)
+                      "Quan", "Dien_tich", "Muc_gia", "Khu_vuc"], inplace=True)
 
     print(df.info())
 
     return df
 
 
-def push_data_to_bigquery(data_dir="ads_data/", project_id="real-estate-project-445516", dataset_id="real_estate_data",
+def push_data_to_bigquery(data_dir="home/tri/Documents/Real estate website project/ads_data/",
+                          project_id="real-estate-project-445516", dataset_id="real_estate_data",
                           table_id="ads_data", num_worker=4):
     # Concatenate all data from different workers
     df = pd.DataFrame()
@@ -556,7 +561,7 @@ os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "real-estate-project-445516-83dc5
 
 # Main script
 if __name__ == "__main__":
-    clear_previous_data()
-    scrape_links_wrapper()
-    collect_ads_data_wrapper()
+    # clear_previous_data()
+    # scrape_links_wrapper()
+    # collect_ads_data_wrapper()
     push_data_to_bigquery()
