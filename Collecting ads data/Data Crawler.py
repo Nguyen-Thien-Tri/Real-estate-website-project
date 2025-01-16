@@ -293,7 +293,7 @@ def data_processing(df1):
 
     # Change "Ngày đăng", "Ngày gia hạn" and "Ngày hết hạn" (d/m/y) into date
     df["Ngày đăng"] = pd.to_datetime(df["Ngày đăng"], format="%d/%m/%Y")
-    df["Ngày gia hạn"] = pd.to_datetime(df["Ngày gia hạn"], format="%d/%m/%Y")
+    df["Ngày gia hạn"] = pd.to_datetime(df["Ngày gia hạn"])
     df["Ngày hết hạn"] = pd.to_datetime(df["Ngày hết hạn"], format="%d/%m/%Y")
 
     # Replace "Bán ", "Cho thuê " and " tại Việt Nam" by "" for each value in "Loại BĐS"
@@ -379,7 +379,9 @@ def data_processing(df1):
 
     # Drop nan values
     df.dropna(subset=["Ma_tin", "Loai_tin", "Ngay_dang", "Ngay_het_han", "Loai_quang_cao", "Loai_BDS", "Tinh_thanh_pho",
-                      "Quan", "Dien_tich", "Muc_gia", "Khu_vuc"], inplace=True)
+                      "Quan", "Dien_tich", "Khu_vuc"], inplace=True)
+
+    df = df.replace(['nan', "None", 'NA', 'N/A', 'null'], np.nan).infer_objects(copy=False)
 
     print(df.info())
 
@@ -394,7 +396,7 @@ def push_data_to_bigquery(data_dir="home/tri/Documents/Real estate website proje
     for i in range(num_worker):
         files = os.listdir(f"{data_dir}driver{i}_data")
         for file in files:
-            df_temp = pd.read_excel(f"{data_dir}driver{i}_data/{file}")
+            df_temp = pd.read_excel(f"{data_dir}driver{i}_data/{file}", engine="openpyxl", dtype=str)
             df = pd.concat([df, df_temp], ignore_index=True)
 
     # Process the data
@@ -407,9 +409,7 @@ def push_data_to_bigquery(data_dir="home/tri/Documents/Real estate website proje
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
 
     # Configure job settings for appending data
-    job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND",  # Appends data to the existing table
-                                        autodetect=True  # Auto-detect schema from the DataFrame
-                                        )
+    job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
 
     # Load the DataFrame into BigQuery
     try:
