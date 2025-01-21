@@ -13,6 +13,7 @@ from google.cloud import bigquery
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from bisect import bisect_left
 
 
 def get_page_with_retry(driver, url, wait=30):
@@ -40,13 +41,12 @@ def init_driver():
     options.add_argument("--disable-application-cache")
 
     options.page_load_strategy = "none"
-    options.add_extension("AdBlock_2.crx")
     driver = webdriver.Chrome(options=options)
     return driver
 
 
 # Function to find an element with retries
-def find_element_with_retry(driver, by, value, retries=10, wait=0.5):
+def find_element_with_retry(driver, by, value, retries=100, wait=0.5):
     for _ in range(retries):
         try:
             return driver.find_element(by, value)
@@ -56,33 +56,49 @@ def find_element_with_retry(driver, by, value, retries=10, wait=0.5):
 
 
 # Function to scrape links
-def scrape_links(driver, base_url, start_page, start_date, end_date, max_pages, existed_ads_ids):
+def scrape_links(driver, base_url, start_page, start_date, end_date, max_page, existed_ads_ids):
+    # Function to check if an element exists in a sorted list using bisect
+    def is_in_sorted_list(sorted_list, element):
+        index = bisect_left(sorted_list, element)
+        return index < len(sorted_list) and sorted_list[index] == element
+
     all_links = []
+    flag = False if existed_ads_ids is None else True
+    if flag:
+        existed_ads_ids.sort()
 
-    for i in range(start_page - 2, max_pages + 1):
+    for i in range(start_page - 2, max_page + 1):
         url = base_url.format(i=i)
-        get_page_with_retry(driver, url)
-        product_list = find_element_with_retry(driver, By.ID, "product-lists-web")
-        children = product_list.find_elements(By.XPATH, "./*")
-        for child in children:
-            element = child.find_element(By.CSS_SELECTOR, "span.re__card-published-info-published-at")
-            ngay_gia_han = element.get_attribute("aria-label")
-            ngay_gia_han = datetime.strptime(ngay_gia_han, "%d/%m/%Y").date()
-            if ngay_gia_han > end_date:
-                continue
-            if ngay_gia_han < start_date:
-                return all_links
-            link_element = child.find_element(By.TAG_NAME, "a")
-            link = link_element.get_attribute("href")
-            ads_id = link.split("-")[-1].replace("pr", "")
 
-            # Check if the ads_id is in existed_ads_ids
-            flag = False if existed_ads_ids is None else True
-            if flag:
-                if ads_id not in existed_ads_ids:
+        try:
+            get_page_with_retry(driver, url)
+            product_list = find_element_with_retry(driver, By.ID, "product-lists-web")
+            children = product_list.find_elements(By.CLASS_NAME, "js__card-full-web")[:20]
+
+            for child in children:
+                element = child.find_element(By.CSS_SELECTOR, "span.re__card-published-info-published-at")
+                ngay_gia_han = element.get_attribute("aria-label")
+                ngay_gia_han = datetime.strptime(ngay_gia_han, "%d/%m/%Y").date()
+                if ngay_gia_han > end_date:
+                    continue
+                if ngay_gia_han < start_date:
+                    print("end_page: ", i)
+                    return all_links
+                link_element = child.find_element(By.TAG_NAME, "a")
+                link = link_element.get_attribute("href")
+                try:
+                    ads_id = int(link.split("-")[-1].replace("pr", ""))
+                except ValueError:
+                    ads_id = int(link.split("-")[-1].replace("pr", "").split("?")[0])
+
+                # Check if the ads_id is in existed_ads_ids using bisect
+                if flag:
+                    if not is_in_sorted_list(existed_ads_ids, ads_id):
+                        all_links.append((link, ngay_gia_han))
+                else:
                     all_links.append((link, ngay_gia_han))
-            else:
-                all_links.append((link, ngay_gia_han))
+        except:
+            continue
 
     # Drop duplicate
     all_links = list(set(all_links))
@@ -164,14 +180,12 @@ def collect_ads_data(links, num_worker=4):
                     ad_data['Tên dự án'] = None
 
                 # Get the map coordinates
-                i = 0
-                while i < 10:
+                while True:
                     try:
                         map_element = map_element.find_element(By.CLASS_NAME, "lazyloaded")
                         ad_data['Tọa độ'] = map_element.get_attribute("data-src").split("=")[1].replace("&key", "")
                         break
                     except:
-                        i += 1
                         time.sleep(0.5)
 
                 ads_data.append(ad_data)
@@ -313,24 +327,30 @@ def data_processing(df1):
 
     # Process "Mức giá"
     for index, row in df.iterrows():
-        parts = row["Mức giá"].split(" ")
-        first_part = float(parts[0].replace('.', '').replace(',', '.')) if parts[0] != "Thỏa" else "Thỏa"
-        second_part = parts[1]
+        try:
+            parts = row["Mức giá"].split(" ")
+            first_part = float(parts[0].replace('.', '').replace(',', '.')) if parts[0] != "Thỏa" else "Thỏa"
+            second_part = parts[1]
 
-        if second_part in ("tỷ", "tỷ/tháng"):
-            df.at[index, "Mức giá"] = first_part * 1e9
-        elif second_part == "thuận":
+            if second_part in ("tỷ", "tỷ/tháng"):
+                df.at[index, "Mức giá"] = first_part * 1e9
+            elif second_part == "thuận":
+                df.at[index, "Mức giá"] = np.nan
+            elif second_part == "triệu/m²":
+                df.at[index, "Mức giá"] = row["Diện tích"] * first_part * 1e6
+            elif second_part in ("triệu", "triệu/tháng"):
+                df.at[index, "Mức giá"] = first_part * 1e6
+            elif second_part == "nghìn/m²":
+                df.at[index, "Mức giá"] = row["Diện tích"] * first_part * 1e3
+            elif second_part == "nghìn/tháng":
+                df.at[index, "Mức giá"] = first_part * 1e3
+            elif second_part == "tỷ/m²":
+                df.at[index, "Mức giá"] = row["Diện tích"] * first_part * 1e9
+            elif second_part == "nghìn":
+                df.at[index, "Mức giá"] = first_part * 1e3
+        except AttributeError:
             df.at[index, "Mức giá"] = np.nan
-        elif second_part == "triệu/m²":
-            df.at[index, "Mức giá"] = row["Diện tích"] * first_part * 1e6
-        elif second_part in ("triệu", "triệu/tháng"):
-            df.at[index, "Mức giá"] = first_part * 1e6
-        elif second_part == "nghìn/m²":
-            df.at[index, "Mức giá"] = row["Diện tích"] * first_part * 1e3
-        elif second_part == "nghìn/tháng":
-            df.at[index, "Mức giá"] = first_part * 1e3
-        elif second_part == "tỷ/m²":
-            df.at[index, "Mức giá"] = row["Diện tích"] * first_part * 1e9
+
     df["Mức giá"] = df["Mức giá"].astype(float)
 
     # Process "Đường vào" and "Mặt tiền"
@@ -474,7 +494,6 @@ def get_existed_ads_ids(project_id="real-estate-project-445516", dataset_id="rea
     query = f"""
         SELECT DISTINCT Ma_tin
         FROM `{project_id}.{dataset_id}.{table_id}`
-        WHERE 
     """
 
     try:
@@ -492,21 +511,22 @@ def get_existed_ads_ids(project_id="real-estate-project-445516", dataset_id="rea
 
 def scrape_links_wrapper():
     # Function to find the starting page
-    def find_start_page(driver, base_url, end_date, start_page, max_pages):
-        mid = (start_page + max_pages) // 2
+    def find_start_page(driver, base_url, end_date, start_page, max_page):
+        mid = (start_page + max_page) // 2
         if mid == start_page:
             return start_page
         get_page_with_retry(driver, base_url.format(i=mid))
         product_list = find_element_with_retry(driver, By.ID, "product-lists-web")
-        children = product_list.find_elements(By.CLASS_NAME, "js__card-full-web")
+        children = product_list.find_elements(By.CLASS_NAME, "js__card-full-web")[:20]
+
         for child in children:
             element = child.find_element(By.CSS_SELECTOR, "span.re__card-published-info-published-at")
-            ngay_dang = element.get_attribute("aria-label")
-            ngay_dang_date = datetime.strptime(ngay_dang, "%d/%m/%Y").date()
-            if ngay_dang_date <= end_date:
+            ngay_gia_han = element.get_attribute("aria-label")
+            ngay_gia_han_date = datetime.strptime(ngay_gia_han, "%d/%m/%Y").date()
+            if ngay_gia_han_date <= end_date:
                 return find_start_page(driver, base_url, end_date, start_page, mid)
-            elif ngay_dang_date > end_date:
-                return find_start_page(driver, base_url, end_date, mid, max_pages)
+            elif ngay_gia_han_date > end_date:
+                return find_start_page(driver, base_url, end_date, mid, max_page)
 
     def get_max_page(driver):
         try:
@@ -522,25 +542,29 @@ def scrape_links_wrapper():
 
     driver = init_driver()
 
-    # start_date = determine_start_date()
-    start_date = date.today() - timedelta(days=1)
+    start_date = determine_start_date()
+    # start_date = date.today() - timedelta(days=1)
     end_date = date.today() - timedelta(days=1)
+
     existed_ads_ids = get_existed_ads_ids()
+    existed_ads_ids = [int(ads_id) for ads_id in existed_ads_ids] if existed_ads_ids != None else None
     all_scraped_links = []
 
     for base_url in base_urls:
         get_page_with_retry(driver, base_url.format(i=1))
-        max_pages = get_max_page(driver)
-        start_page = find_start_page(driver, base_url, end_date, 1, max_pages)
-        links = scrape_links(driver, base_url, start_page, start_date, end_date, max_pages, existed_ads_ids)
+        max_page = get_max_page(driver)
+        start_page = find_start_page(driver, base_url, end_date, 1, max_page)
+        print("start_page: ", start_page)
+        links = scrape_links(driver, base_url, start_page, start_date, end_date, max_page, existed_ads_ids)
         all_scraped_links.extend(links)
 
     # Delete scraped_links.csv
-    if os.path.exists("scraped_links.csv"):
-        os.remove("scraped_links.csv")
+    if os.path.exists("home/tri/Documents/Real estate website project/ads_data/scraped_links.csv"):
+        os.remove("home/tri/Documents/Real estate website project/ads_data/scraped_links.csv")
 
     # Save links and ngay_gia_han to a csv file
-    with open("scraped_links.csv", mode='w', newline='') as file:
+    with open("home/tri/Documents/Real estate website project/ads_data/scraped_links.csv", mode='w',
+              newline='') as file:
         writer = csv.writer(file)
         writer.writerows(all_scraped_links)
 
@@ -549,7 +573,7 @@ def scrape_links_wrapper():
 
 def collect_ads_data_wrapper(num_worker=4):
     all_scraped_links = []
-    with open("scraped_links.csv", mode='r') as file:
+    with open("home/tri/Documents/Real estate website project/ads_data/scraped_links.csv", mode='r') as file:
         reader = csv.reader(file)
         for row in reader:
             all_scraped_links.append((row[0], datetime.strptime(row[1], "%Y-%m-%d").date()))
@@ -561,7 +585,7 @@ os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "real-estate-project-445516-83dc5
 
 # Main script
 if __name__ == "__main__":
-    # clear_previous_data()
-    # scrape_links_wrapper()
-    # collect_ads_data_wrapper()
+    clear_previous_data()
+    scrape_links_wrapper()
+    collect_ads_data_wrapper()
     push_data_to_bigquery()
